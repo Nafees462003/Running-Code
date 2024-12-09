@@ -1,175 +1,220 @@
-#include <AnimatedGIF.h>
-#include <TFT_eSPI.h>
+#define USE_DMA       // ESP32 ~1.25x single frame rendering performance boost for badgers.h
+#define TFT_MISO 19  // SPI MISO
+#define TFT_MOSI 23  // SPI MOSI
+#define TFT_SCLK 18  // SPI SCK
+#define TFT_CS   15  // Chip select control pin for TFT
+#define TFT_DC   2   // Data Command control pin
+#define TFT_RST  4   // Reset pin for TFT
+#define SD_CS    12  // Chip select for SD card
+
 #include <SPI.h>
+#include <TFT_eSPI.h>
+#include <AnimatedGIF.h>
 #include <SD.h>
 
-#define TFT_CS         15
-#define TFT_RST        4
-#define TFT_DC         2
-
-#define DISPLAY_WIDTH  128
-#define DISPLAY_HEIGHT 160
-
-TFT_eSPI tft = TFT_eSPI(); // Create TFT object
+TFT_eSPI tft = TFT_eSPI();
 AnimatedGIF gif;
-File f;
-String gifFilename = "/kiss2.GIF"; // Default filename
 
-void * GIFOpenFile(const char *fname, int32_t *pSize) {
-  f = SD.open(fname);
-  if (f) {
-    *pSize = f.size();
-    return (void *)&f;
-  }
-  return NULL;
-}
+char filename[30] = "/kiss2.gif"; // Default file name
 
-void GIFCloseFile(void *pHandle) {
-  // Don't close the file here to reduce delay
-}
+#define DISPLAY_WIDTH  tft.width()
+#define DISPLAY_HEIGHT tft.height()
+#define BUFFER_SIZE 256            // Optimum is >= GIF width or integral division of width
 
-int32_t GIFReadFile(GIFFILE *pFile, uint8_t *pBuf, int32_t iLen) {
-    int32_t iBytesRead;
-    iBytesRead = iLen;
-    File *f = static_cast<File *>(pFile->fHandle);
-    if ((pFile->iSize - pFile->iPos) < iLen)
-       iBytesRead = pFile->iSize - pFile->iPos - 1;
-    if (iBytesRead <= 0)
-       return 0;
-    iBytesRead = (int32_t)f->read(pBuf, iBytesRead);
-    pFile->iPos = f->position();
-    return iBytesRead;
-}
+#ifdef USE_DMA
+  uint16_t usTemp[2][BUFFER_SIZE]; // Global to support DMA use
+#else
+  uint16_t usTemp[1][BUFFER_SIZE]; // Global to support non-DMA use
+#endif
 
-int32_t GIFSeekFile(GIFFILE *pFile, int32_t iPosition) {
-  File *f = static_cast<File *>(pFile->fHandle);
-  f->seek(iPosition);
-  pFile->iPos = (int32_t)f->position();
-  return pFile->iPos;
-}
-
-void GIFDraw(GIFDRAW *pDraw) {
-    uint8_t *s;
-    uint16_t *d, *usPalette, usTemp[320];
-    int x, y, iWidth;
-
-    iWidth = pDraw->iWidth;
-    if (iWidth + pDraw->iX > DISPLAY_WIDTH)
-       iWidth = DISPLAY_WIDTH - pDraw->iX;
-    usPalette = pDraw->pPalette;
-    y = pDraw->iY + pDraw->y;
-    if (y >= DISPLAY_HEIGHT || pDraw->iX >= DISPLAY_WIDTH || iWidth < 1)
-       return;
-    s = pDraw->pPixels;
-
-    if (pDraw->ucDisposalMethod == 2) {
-      for (x=0; x<iWidth; x++) {
-        if (s[x] == pDraw->ucTransparent)
-           s[x] = pDraw->ucBackground;
-      }
-      pDraw->ucHasTransparency = 0;
-    }
-
-    if (pDraw->ucHasTransparency) {
-      uint8_t *pEnd, c, ucTransparent = pDraw->ucTransparent;
-      int x, iCount;
-      pEnd = s + iWidth;
-      x = 0;
-      iCount = 0;
-      while(x < iWidth) {
-        c = ucTransparent-1;
-        d = usTemp;
-        while (c != ucTransparent && s < pEnd) {
-          c = *s++;
-          if (c == ucTransparent) {
-            s--;
-          } else {
-            *d++ = usPalette[c];
-            iCount++;
-          }
-        }
-        if (iCount) {
-          tft.startWrite();
-          tft.setAddrWindow(pDraw->iX+x, y, iCount, 1);
-          tft.pushColors(usTemp, iCount, false);
-          tft.endWrite();
-          x += iCount;
-          iCount = 0;
-        }
-        c = ucTransparent;
-        while (c == ucTransparent && s < pEnd) {
-          c = *s++;
-          if (c == ucTransparent)
-             iCount++;
-          else
-             s--;
-        }
-        if (iCount) {
-          x += iCount;
-          iCount = 0;
-        }
-      }
-    } else {
-      s = pDraw->pPixels;
-      for (x=0; x<iWidth; x++)
-        usTemp[x] = usPalette[*s++];
-      tft.startWrite();
-      tft.setAddrWindow(pDraw->iX, y, iWidth, 1);
-      tft.pushColors(usTemp, iWidth, false);
-      tft.endWrite();
-    }
-}
+bool dmaBuf = 0;
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial);
-
-  SPI.begin();
-
-  if(!SD.begin(12)) {
-    Serial.println("SD Card mount failed!");
+   if (!SD.begin(SD_CS)) {
+    Serial.println("SD card initialization failed!");
     return;
-  } else {
-    Serial.println("SD Card mount succeeded!");
   }
-
-  tft.init();
+  Serial.println("SD card initialized.");
+  tft.begin();
+#ifdef USE_DMA
+  tft.initDMA();
+#endif
   tft.setRotation(2);
   tft.fillScreen(TFT_BLACK);
-  gif.begin(BIG_ENDIAN_PIXELS);
+
+
   
-  // Load GIF once on startup
-  if (gif.open(gifFilename.c_str(), GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
-    Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
-  } else {
-    Serial.printf("Error opening file = %d\n", gif.getLastError());
-    while (1) {}
-  }
+  gif.begin(BIG_ENDIAN_PIXELS);
 }
 
 void loop() {
-  // Check for available serial input
-  if (Serial.available()) {
-    String inputFilename = Serial.readStringUntil('\n'); // Read until newline
-    if (inputFilename.length() > 0) {
-      gifFilename = inputFilename; // Update the filename
-      Serial.printf("GIF filename updated to: %s\n", gifFilename.c_str());
-      
-      // Close the existing GIF file
-      gif.close();
-      
-      // Reopen the new GIF file
-      if (gif.open(gifFilename.c_str(), GIFOpenFile, GIFCloseFile, GIFReadFile, GIFSeekFile, GIFDraw)) {
-        Serial.printf("Successfully opened new GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
-      } else {
-        Serial.printf("Error opening new file = %d\n", gif.getLastError());
-        while (1) {}
+  // Check for incoming serial data
+  if (Serial.available() > 0) {
+    Serial.readBytesUntil('\n', filename, sizeof(filename)); // Read the filename from Serial
+    filename[sizeof(filename) - 1] = '\0'; // Ensure null-termination
+    Serial.print("Updated filename: ");
+    Serial.println(filename);
+  }
+
+  // Open the GIF file from SD card
+  File gifFile = SD.open(filename);
+  if (!gifFile) {
+    Serial.print("Failed to open GIF file: ");
+    Serial.println(filename);
+    delay(2000); // Wait before retrying
+    return;
+  }
+
+  // Read the GIF file into a buffer
+  const size_t bufferSize = 32768; // Size of the buffer, adjust if needed
+  uint8_t buffer[bufferSize];
+  size_t bytesRead;
+
+  // Use a dynamic buffer to hold the whole GIF file data
+  uint8_t* gifData = nullptr;
+  size_t gifSize = 0;
+
+  // Read the file to determine the size
+  while (gifFile.available()) {
+    if (gifSize % bufferSize == 0) {
+      gifData = (uint8_t*) realloc(gifData, gifSize + bufferSize);
+    }
+    bytesRead = gifFile.read(gifData + gifSize, bufferSize);
+    gifSize += bytesRead;
+  }
+  gifFile.close(); // Close the file after reading
+
+  // Attempt to open the GIF data for playing
+  if (gif.open(gifData, gifSize, GIFDraw)) {
+    Serial.printf("Successfully opened GIF; Canvas size = %d x %d\n", gif.getCanvasWidth(), gif.getCanvasHeight());
+    tft.startWrite(); // The TFT chip select is locked low
+
+    // Play the GIF frames
+    while (gif.playFrame(true, NULL)) {
+      yield();
+    }
+    
+    gif.close();
+    tft.endWrite(); // Release TFT chip select for other SPI devices
+  } else {
+    Serial.println("Failed to open GIF.");
+  }
+
+  free(gifData); // Free the dynamically allocated buffer
+  delay(2000); // Wait for 2 seconds before the next GIF
+}
+
+// GIFDraw function for drawing GIF frames
+void GIFDraw(GIFDRAW *pDraw) {
+  uint8_t *s;
+  uint16_t *d, *usPalette;
+  int x, y, iWidth, iCount;
+
+  // Display bounds check and cropping
+  iWidth = pDraw->iWidth;
+  if (iWidth + pDraw->iX > DISPLAY_WIDTH)
+    iWidth = DISPLAY_WIDTH - pDraw->iX;
+  usPalette = pDraw->pPalette;
+  y = pDraw->iY + pDraw->y; // current line
+  if (y >= DISPLAY_HEIGHT || pDraw->iX >= DISPLAY_WIDTH || iWidth < 1)
+    return;
+
+  // Old image disposal
+  s = pDraw->pPixels;
+  if (pDraw->ucDisposalMethod == 2) // restore to background color
+  {
+    for (x = 0; x < iWidth; x++)
+    {
+      if (s[x] == pDraw->ucTransparent)
+        s[x] = pDraw->ucBackground;
+    }
+    pDraw->ucHasTransparency = 0;
+  }
+
+  // Apply the new pixels to the main image
+  if (pDraw->ucHasTransparency) // if transparency used
+  {
+    uint8_t *pEnd, c, ucTransparent = pDraw->ucTransparent;
+    pEnd = s + iWidth;
+    x = 0;
+    iCount = 0; // count non-transparent pixels
+    while (x < iWidth)
+    {
+      c = ucTransparent - 1;
+      d = &usTemp[0][0];
+      while (c != ucTransparent && s < pEnd && iCount < BUFFER_SIZE)
+      {
+        c = *s++;
+        if (c == ucTransparent) // done, stop
+        {
+          s--; // back up to treat it like transparent
+        }
+        else // opaque
+        {
+          *d++ = usPalette[c];
+          iCount++;
+        }
+      } // while looking for opaque pixels
+      if (iCount) // any opaque pixels?
+      {
+        // DMA would degrade performance here due to short line segments
+        tft.setAddrWindow(pDraw->iX + x, y, iCount, 1);
+        tft.pushPixels(usTemp, iCount);
+        x += iCount;
+        iCount = 0;
+      }
+      // no, look for a run of transparent pixels
+      c = ucTransparent;
+      while (c == ucTransparent && s < pEnd)
+      {
+        c = *s++;
+        if (c == ucTransparent)
+          x++;
+        else
+          s--;
       }
     }
   }
+  else
+  {
+    s = pDraw->pPixels;
 
-  // Play the GIF continuously
-  while (gif.playFrame(true, NULL)) {
-    // The playFrame method will handle frame playback automatically
+    // Unroll the first pass to boost DMA performance
+    // Translate the 8-bit pixels through the RGB565 palette (already byte reversed)
+    if (iWidth <= BUFFER_SIZE)
+      for (iCount = 0; iCount < iWidth; iCount++) usTemp[dmaBuf][iCount] = usPalette[*s++];
+    else
+      for (iCount = 0; iCount < BUFFER_SIZE; iCount++) usTemp[dmaBuf][iCount] = usPalette[*s++];
+
+#ifdef USE_DMA // 71.6 fps (ST7796 84.5 fps)
+    tft.dmaWait();
+    tft.setAddrWindow(pDraw->iX, y, iWidth, 1);
+    tft.pushPixelsDMA(&usTemp[dmaBuf][0], iCount);
+    dmaBuf = !dmaBuf;
+#else // 57.0 fps
+    tft.setAddrWindow(pDraw->iX, y, iWidth, 1);
+    tft.pushPixels(&usTemp[0][0], iCount);
+#endif
+
+    iWidth -= iCount;
+    // Loop if pixel buffer smaller than width
+    while (iWidth > 0)
+    {
+      // Translate the 8-bit pixels through the RGB565 palette (already byte reversed)
+      if (iWidth <= BUFFER_SIZE)
+        for (iCount = 0; iCount < iWidth; iCount++) usTemp[dmaBuf][iCount] = usPalette[*s++];
+      else
+        for (iCount = 0; iCount < BUFFER_SIZE; iCount++) usTemp[dmaBuf][iCount] = usPalette[*s++];
+
+#ifdef USE_DMA
+      tft.dmaWait();
+      tft.pushPixelsDMA(&usTemp[dmaBuf][0], iCount);
+      dmaBuf = !dmaBuf;
+#else
+      tft.pushPixels(&usTemp[0][0], iCount);
+#endif
+      iWidth -= iCount;
+    }
   }
-}
+} /* GIFDraw() */
