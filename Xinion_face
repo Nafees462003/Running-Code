@@ -1,0 +1,118 @@
+#include <TFT_eSPI.h>
+
+
+TFT_eSPI tft = TFT_eSPI();
+const int a1 = 32; 
+const int b1 = 33;
+const int c1 = 34;
+const int d1 = 35;
+const int e1 = 36;
+const int f1 = 39; // Define the analog pin for the potentiometer
+int a = 0;  
+int b= 0;
+int c = 0;
+int d = 0;
+int e = 0;
+int f= 0;      // Variable to store the potentiometer value
+
+void setup() {
+   Serial.begin(115200);  
+  tft.init();
+  tft.fillScreen(TFT_BLACK);
+  tft.setRotation(3); // clear the screen
+
+
+
+  
+}
+
+void face1()
+{
+  tft.fillScreen(TFT_BLACK);
+   tft.drawRect(20, 15, 50, 50, TFT_CYAN);
+    tft.fillRect(20, 15, 50, 50, TFT_CYAN);
+    tft.drawRect(90, 15, 50, 50, TFT_CYAN);
+  tft.fillRect(90, 15, 50, 50, TFT_CYAN);
+  delay(300);
+  }
+
+void face2()
+{
+  tft.fillScreen(TFT_BLACK);
+   tft.drawRect(30, 20, 50, 45, TFT_CYAN);
+    tft.fillRect(30, 20, 50, 45, TFT_CYAN);
+    tft.drawRect(100, 5, 50, 60, TFT_CYAN);
+  tft.fillRect(100, 5, 50, 60, TFT_CYAN);
+  delay(300);
+  }
+
+void face3()
+{
+  tft.fillScreen(TFT_BLACK);
+   tft.drawRect(10, 5, 50, 60, TFT_CYAN);
+    tft.fillRect(10, 5, 50, 60, TFT_CYAN);
+    tft.drawRect(80, 20, 50, 45, TFT_CYAN);
+  tft.fillRect(80, 20, 50, 45, TFT_CYAN);
+  delay(300);
+  }
+
+void face4()
+{
+   tft.fillScreen(TFT_BLACK);
+   tft.drawTriangle(20,35 ,69 ,35 , 69,15 , TFT_CYAN);
+    tft.fillTriangle(20,35 ,69 ,35 , 69,15 , TFT_CYAN);
+    tft.drawTriangle(90, 15, 90,35 , 139,35 , TFT_CYAN);
+     tft.fillTriangle(90, 15, 90,35 , 139,35 , TFT_CYAN);
+
+     tft.drawRect(20, 35, 50, 25, TFT_CYAN);
+    tft.fillRect(20, 35, 50, 25, TFT_CYAN);
+    tft.drawRect(90, 35, 50, 25, TFT_CYAN);
+  tft.fillRect(90, 35, 50, 25, TFT_CYAN);
+  delay(300);
+}
+
+
+void loop() {
+ 
+    
+     int ar = analogRead(a1); 
+    a = map(ar, 0, 3048, 0, 40);
+     int br = analogRead(b1); 
+    b = map(br, 0, 4000, 0, 60);
+     int cr = analogRead(c1); 
+    c = map(cr, 0, 6000, 0, 160);
+     int dr = analogRead(d1); 
+    d = map(dr, 0, 4000, 0, 60);
+     int er = analogRead(e1); 
+    e = map(er, 0, 6000, 0, 160);
+     int fr = analogRead(f1); 
+    f = map(fr, 0, 4000, 0, 60);
+    
+    Serial.print(a);
+    Serial.print("\t");
+    Serial.print(b);
+    Serial.print("\t");
+    Serial.print(c);
+    Serial.print("\t");
+    Serial.print(d);
+    Serial.print("\t");
+    Serial.print(e);
+    Serial.print("\t");
+    Serial.println(f);
+
+  if(a<10){
+    face4();
+  }
+ if(a>10&&a<20){
+    face2();
+  }
+  if(a>20&&a<30){
+    face1();
+  }
+  if(a>30&&a<40){
+    face3();
+  }
+
+    delay(100);// Small delay to stabilize readings
+}
+ 
